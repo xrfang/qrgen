@@ -14,3 +14,5 @@
 
 # Following are sample dependencies, modify as appropriate.
 github.com/skip2/go-qrcode
+golang.org/x/image/font
+golang.org/x/image/math/fixed

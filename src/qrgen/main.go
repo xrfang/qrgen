@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/image/font"
@@ -17,19 +18,26 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-func genCode(content string, level qrcode.RecoveryLevel, size int) image.Image {
-	buf, err := qrcode.Encode(content, level, size)
+func parseColor(clrspec string) color.Color {
+	r, err := strconv.ParseUint(clrspec[:2], 16, 8)
+	assert(err)
+	g, err := strconv.ParseUint(clrspec[2:4], 16, 8)
+	assert(err)
+	b, err := strconv.ParseUint(clrspec[4:6], 16, 8)
+	assert(err)
+	return color.RGBA{uint8(r), uint8(g), uint8(b), 255}
+}
+
+func genCode(content string, level qrcode.RecoveryLevel, size int, bg, fg color.Color) image.Image {
+	q, err := qrcode.New(content, level)
+	assert(err)
+	q.BackgroundColor = bg
+	q.ForegroundColor = fg
+	buf, err := q.PNG(size)
 	assert(err)
 	img, err := png.Decode(bytes.NewBuffer(buf))
 	assert(err)
 	return img
-}
-
-func saveResult(fn string, img image.Image) {
-	f, err := os.Create(fn)
-	assert(err)
-	defer f.Close()
-	assert(png.Encode(f, img))
 }
 
 func getBackground(fn string) *image.RGBA {
@@ -43,20 +51,25 @@ func getBackground(fn string) *image.RGBA {
 	return canvas
 }
 
-func paintCode(canvas *image.RGBA, code image.Image, x, y int) {
+func paintCode(canvas *image.RGBA, code image.Image, xshift, yshift int) {
 	b := canvas.Bounds()
 	f := code.Bounds()
 	if f.Dx() > b.Dx() || f.Dy() > b.Dy() {
-		panic("QR Code is larger than background")
+		panic("QR Code larger than background")
 	}
+	x := int((b.Dx()-f.Dx())/2) + xshift
+	y := int((b.Dy()-f.Dy())/2) + yshift
+	r := image.Rect(x, y, x+f.Dx(), y+f.Dy())
+	draw.Draw(canvas, r, code, image.Point{0, 0}, draw.Over)
 }
 
-func addLabel(img *image.RGBA, label string) {
-	x := 1
-	y := 20
-	col := color.RGBA{32, 32, 32, 255}
+func addLabel(img *image.RGBA, label string, shift int) {
+	x := shift
+	y := img.Bounds().Dy() - shift
+	p := img.At(x, y)
+	r, g, b, _ := p.RGBA()
+	col := color.RGBA{255 - uint8(r), 255 - uint8(g), 255 - uint8(b), 255}
 	point := fixed.Point26_6{fixed.Int26_6(x * 64), fixed.Int26_6(y * 64)}
-
 	d := &font.Drawer{
 		Dst:  img,
 		Src:  image.NewUniform(col),
@@ -91,7 +104,10 @@ func main() {
 	errlvl := flag.Int("level", 1, "error tolerance level (0~3)")
 	xshift := flag.Int("xshift", 0, "x-shift away from center")
 	yshift := flag.Int("yshift", 0, "y-shift away from center")
-	mark := flag.String("mark", "", "mark text (always appear at lower-left corner)")
+	mshift := flag.Int("mshift", 5, "shift of label against bottom-left corner")
+	bgcolor := flag.String("bgcolor", "ffffff", "background color for QR code")
+	fgcolor := flag.String("fgcolor", "000000", "foreground color for QR code")
+	mark := flag.String("mark", "", "mark text (always appear at bottom-left corner)")
 	flag.BoolVar(&dbg, "debug", false, "show stack trace on error")
 	flag.Parse()
 	if *errlvl < 0 || *errlvl > 3 {
@@ -108,13 +124,17 @@ func main() {
 		os.Exit(1)
 	}
 	content := flag.Arg(0)
-	code := genCode(content, qrcode.RecoveryLevel(*errlvl), *size)
+	bc := parseColor(*bgcolor)
+	fc := parseColor(*fgcolor)
+	code := genCode(content, qrcode.RecoveryLevel(*errlvl), *size, bc, fc)
 	if *bg == "" {
 		assert(png.Encode(os.Stdout, code))
 		return
 	}
 	canvas := getBackground(*bg)
 	paintCode(canvas, code, *xshift, *yshift)
-	addLabel(canvas, *mark)
+	if *mark != "" {
+		addLabel(canvas, *mark, *mshift)
+	}
 	assert(png.Encode(os.Stdout, canvas))
 }
